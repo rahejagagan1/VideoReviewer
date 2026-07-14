@@ -1,0 +1,17 @@
+{
+  "name": "video-reviewer-platform",
+  "version": "1.0.0",
+  "description": "Platform where admins create YouTube video review tasks with feedback questions, and users must watch the full video before answering.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "test-db": "node --env-file-if-exists=.env scripts/test-db.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.22.0"
+  }
+}

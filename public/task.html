@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Review Task</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">🎬 Video<span>Review</span></div>
+  </div>
+
+  <div class="center-wrap">
+
+    <!-- LOADING / NOT FOUND -->
+    <div id="stage-loading" class="card" style="text-align:center;padding:48px;">
+      <h2>Loading task…</h2>
+    </div>
+    <div id="stage-notfound" class="card hidden" style="text-align:center;padding:48px;">
+      <h1>😕 Task not found</h1>
+      <p class="muted">This link is not valid or the task was removed. Please check the link you received.</p>
+    </div>
+
+    <!-- INSTRUCTIONS -->
+    <div id="stage-instructions" class="hidden">
+      <div class="card">
+        <h1 id="instrTitle"></h1>
+        <p class="muted">Please read the instructions carefully before starting.</p>
+        <h3>Instructions</h3>
+        <div class="instructions-body" id="instrBody"></div>
+        <label class="toggle" style="margin:10px 0 18px;">
+          <input type="checkbox" id="acceptCheck" />
+          I have read and accept the instructions
+        </label>
+        <br />
+        <button class="btn big" id="playVideoBtn" disabled>▶ Play Video</button>
+      </div>
+    </div>
+
+    <!-- THUMBNAIL CHOICE -->
+    <div id="stage-thumbs" class="hidden">
+      <div class="card">
+        <h1>Pick a thumbnail</h1>
+        <p class="muted">Which of these thumbnails would make you click on the video? Select one, then press Next.</p>
+        <div class="thumb-grid" id="thumbGrid"></div>
+        <div class="error-msg" id="thumbError"></div>
+        <button class="btn big" id="thumbNextBtn" disabled>Next →</button>
+      </div>
+    </div>
+
+    <!-- VIDEO -->
+    <div id="stage-video" class="hidden">
+      <div class="card" id="videoCard">
+        <h2 id="videoTitle"></h2>
+        <div class="video-shell">
+          <div id="yt-player"></div>
+          <div class="video-guard" id="videoGuard">
+            <div class="big-play" id="bigPlay">
+              <div class="circle">▶</div>
+            </div>
+          </div>
+          <!-- in-video timed question popup -->
+          <div class="quiz-overlay hidden" id="quizOverlay">
+            <div class="quiz-box">
+              <h3 id="quizLabel"></h3>
+              <div id="quizBody"></div>
+              <div class="error-msg" id="quizError"></div>
+              <div class="row" style="justify-content:flex-end;margin-top:8px;">
+                <button class="btn secondary small hidden" id="quizSkipBtn">Skip</button>
+                <button class="btn" id="quizSubmitBtn">Submit &amp; continue ▶</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="player-bar">
+          <button class="btn small" id="playPauseBtn">▶ Play</button>
+          <button class="btn secondary small hidden" id="back10Btn" title="Back 10 seconds">⏪ 10</button>
+          <div class="progress-track" id="progressTrack"><div class="progress-fill" id="progressFill"></div></div>
+          <button class="btn secondary small hidden" id="fwd10Btn" title="Forward 10 seconds">10 ⏩</button>
+          <span class="time-label" id="timeLabel">0:00 / 0:00</span>
+          <button class="btn secondary small" id="fullscreenBtn" title="Fullscreen">⛶</button>
+          <button class="btn small hidden" id="nextBtn">Next →</button>
+        </div>
+        <p class="muted small" id="videoNote" style="margin-top:10px;">
+          ▶ Answer the pop-up questions as they appear. The "Next" button unlocks when the video ends.
+        </p>
+      </div>
+    </div>
+
+    <!-- QUESTIONS -->
+    <div id="stage-questions" class="hidden">
+      <div class="card">
+        <div class="row between">
+          <h1>Feedback</h1>
+          <button class="btn secondary small" id="backToVideoBtn">← Back to video</button>
+        </div>
+        <p class="muted">Thanks for watching! Please answer the questions below.</p>
+        <form id="questionsForm"></form>
+        <div class="error-msg" id="questionsError"></div>
+        <button class="btn big" id="submitAnswersBtn" style="margin-top:10px;">Submit feedback</button>
+      </div>
+    </div>
+
+    <!-- THANK YOU -->
+    <div id="stage-thanks" class="hidden">
+      <div class="card thanks">
+        <div class="check">✓</div>
+        <h1>Thank you!</h1>
+        <p class="muted" id="thanksMsg">Your feedback has been submitted successfully. You may close this page.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- WELCOME MODAL -->
+  <div class="modal-backdrop hidden" id="infoModal">
+    <div class="modal">
+      <h2 style="margin-bottom:4px;">Before you start</h2>
+      <p class="muted small" style="margin-top:0;">Please fill in your details. All fields are required.</p>
+      <form id="infoForm">
+        <label class="field-label">Full name <span class="req">*</span></label>
+        <input type="text" id="fName" required autocomplete="name" />
+        <label class="field-label">Email <span class="req">*</span></label>
+        <input type="email" id="fEmail" required autocomplete="email" />
+        <div class="grid-2">
+          <div>
+            <label class="field-label">County <span class="req">*</span></label>
+            <input type="text" id="fCounty" required />
+          </div>
+          <div>
+            <label class="field-label">Country <span class="req">*</span></label>
+            <input type="text" id="fCountry" required autocomplete="country-name" />
+          </div>
+        </div>
+        <div class="error-msg" id="infoError"></div>
+        <button class="btn" style="width:100%;margin-top:8px;">Submit</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/task.js"></script>
+</body>
+</html>

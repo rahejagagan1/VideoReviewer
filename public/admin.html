@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Video Reviewer Platform</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">🎬 Video<span>Review</span> Admin</div>
+    <button id="logoutBtn" class="btn secondary small hidden">Log out</button>
+  </div>
+
+  <div class="container">
+
+    <!-- LOGIN -->
+    <div id="view-login" class="hidden">
+      <div class="card" style="max-width:420px;margin:60px auto;">
+        <h1>Admin login</h1>
+        <p class="muted">Enter the admin password to manage tasks and view submissions.</p>
+        <form id="loginForm">
+          <label class="field-label">Password</label>
+          <input type="password" id="loginPassword" autocomplete="current-password" required />
+          <div class="error-msg" id="loginError"></div>
+          <button class="btn" style="margin-top:8px;width:100%;">Log in</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- TASK LIST -->
+    <div id="view-tasks" class="hidden">
+      <div class="row between" style="margin-bottom:18px;">
+        <div>
+          <h1>Tasks</h1>
+          <p class="muted" style="margin:0;">Create a video review task and share its link with users.</p>
+        </div>
+        <button class="btn" id="newTaskBtn">＋ New Task</button>
+      </div>
+      <div id="taskList"></div>
+    </div>
+
+    <!-- TASK EDITOR (create / edit) -->
+    <div id="view-editor" class="hidden">
+      <button class="btn secondary small" id="editorBackBtn">← Back</button>
+      <div class="steps" style="margin-top:16px;">
+        <div class="step" id="stepPill1">1 · Video details</div>
+        <div class="step" id="stepPill2">2 · Questions</div>
+      </div>
+
+      <!-- step 1 -->
+      <div class="card" id="editorStep1">
+        <h2 id="editorTitle">New task</h2>
+        <label class="field-label">Task title <span class="req">*</span></label>
+        <input type="text" id="taskTitle" placeholder="e.g. Review our new product video" />
+        <label class="field-label">YouTube video link <span class="req">*</span></label>
+        <input type="url" id="taskVideoUrl" placeholder="https://www.youtube.com/watch?v=..." />
+        <label class="field-label">Instructions shown to the user</label>
+        <textarea id="taskInstructions" placeholder="Write the instructions users must read and accept before watching the video. You can edit this any time."></textarea>
+        <div class="error-msg" id="editorError1"></div>
+        <div class="row" style="justify-content:flex-end;margin-top:10px;">
+          <button class="btn" id="editorNextBtn">Next → Questions</button>
+        </div>
+      </div>
+
+      <!-- step 2 -->
+      <div class="hidden" id="editorStep2">
+        <div class="card">
+          <h2>🖼 Thumbnail choice (before the video)</h2>
+          <p class="muted small">Optional. Add two or more thumbnails and the user picks their favourite after accepting the instructions, before the video plays. Their choice is recorded with the submission. Leave empty to skip this page.</p>
+          <div id="thumbList"></div>
+          <button class="btn secondary" id="addThumbBtn">＋ Add thumbnail</button>
+        </div>
+        <div class="card">
+          <h2>⏱ In-video sections</h2>
+          <p class="muted small">A section pauses the video at its timestamp and pops up with its questions. New sections come pre-filled with your default questions (marked ★) — edit them freely, and star any question to make it a default for future sections.</p>
+          <div id="sectionList"></div>
+          <button class="btn secondary" id="addSectionBtn">＋ Add section</button>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h2 style="margin:0;">Feedback form questions</h2>
+            <label class="toggle" style="font-weight:600;">
+              <input type="checkbox" id="feedbackToggle" checked />
+              Show feedback form after the video
+            </label>
+          </div>
+          <p class="muted small" style="margin-top:8px;">Asked on the feedback page after the user finishes the video. When the toggle is off, pressing "Next" after the video goes straight to the thank-you page.</p>
+          <div id="questionList"></div>
+          <button class="btn secondary" id="addQuestionBtn">＋ Add question</button>
+          <div class="error-msg" id="editorError2"></div>
+          <div class="row between" style="margin-top:16px;">
+            <button class="btn secondary" id="editorPrevBtn">← Back to video details</button>
+            <button class="btn" id="editorSaveBtn">Save task ✓</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TASK DETAIL -->
+    <div id="view-detail" class="hidden">
+      <button class="btn secondary small" id="detailBackBtn">← All tasks</button>
+      <div class="card" style="margin-top:16px;">
+        <div class="row between">
+          <h1 id="detailTitle"></h1>
+          <div class="row">
+            <button class="btn secondary small" id="detailEditBtn">✏️ Edit task</button>
+            <button class="btn danger small" id="detailDeleteBtn">🗑 Delete</button>
+          </div>
+        </div>
+        <p class="muted small" id="detailMeta"></p>
+        <h3 style="margin-top:16px;">Share this link with users</h3>
+        <div class="share-box">
+          <code id="detailShareLink"></code>
+          <button class="btn small" id="copyLinkBtn">Copy</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between">
+          <h2 style="margin:0;">Submissions <span class="badge" id="detailSubCount">0</span></h2>
+          <div class="row">
+            <button class="btn secondary small" id="refreshSubsBtn">↻ Refresh</button>
+            <a class="btn small" id="exportCsvBtn" href="#">⬇ Export CSV</a>
+          </div>
+        </div>
+        <div class="table-scroll" style="margin-top:14px;">
+          <table class="data" id="subsTable"></table>
+        </div>
+        <p class="muted small hidden" id="noSubsMsg"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SUBMISSION DETAIL MODAL -->
+  <div class="modal-backdrop hidden" id="subModal">
+    <div class="modal" style="max-width:640px;max-height:85vh;overflow-y:auto;">
+      <div class="row between">
+        <h2 id="subModalTitle" style="margin:0;"></h2>
+        <button class="btn secondary small" id="subModalClose">✕ Close</button>
+      </div>
+      <p class="muted small" id="subModalMeta" style="margin-top:6px;"></p>
+      <div id="subModalBody"></div>
+    </div>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
