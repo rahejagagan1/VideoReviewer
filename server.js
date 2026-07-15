@@ -279,12 +279,21 @@ app.get('/api/admin/tasks/:id/export.xlsx', requireAdmin, ah(async (req, res) =>
       { label: 'Watch Seconds', get: (s) => Math.round(s.watch_seconds) },
     ],
   });
+  // Resolve the thumbnail a submission picked. Match by id, then fall back to
+  // title, since editing a task recreates thumbnails with new ids.
+  const thumbById = new Map(task.thumbnails.map((t) => [t.id, t]));
+  const thumbByTitle = new Map(task.thumbnails.map((t) => [t.title, t]));
+  const selectedThumb = (s) =>
+    thumbById.get(s.thumbnail_id) || thumbByTitle.get(s.thumbnail_title) || null;
+
   if (task.thumbnails.length) {
     groups.push({
       title: 'Thumbnail',
       cols: [
         { label: 'Chosen', get: (s) => s.thumbnail_title || '' },
         { label: 'Rating', get: (s) => (s.thumbnail_rating != null ? `${s.thumbnail_rating} / 5` : '') },
+        // The image itself is floated over this (empty) cell after the sheet is built.
+        { label: 'Image', get: () => '', isImage: true },
       ],
     });
   }
@@ -354,6 +363,32 @@ app.get('/api/admin/tasks/:id/export.xlsx', requireAdmin, ah(async (req, res) =>
   head.alignment = { vertical: 'middle', wrapText: true };
   head.height = 20;
 
+  // Embed the selected thumbnail image into the "Image" column, floated over
+  // each submission's cell (data rows start at spreadsheet row 3).
+  const imageColIdx = flatCols.findIndex((c) => c.isImage); // 0-based; -1 if none
+  if (imageColIdx >= 0) {
+    const imgW = 128, imgH = 72; // 16:9 preview in pixels
+    ws.getColumn(imageColIdx + 1).width = 20;
+    const parseDataUrl = (url) => {
+      const m = /^data:image\/(png|jpe?g|gif);base64,(.+)$/i.exec(url || '');
+      if (!m) return null;
+      return { extension: m[1].toLowerCase() === 'jpg' ? 'jpeg' : m[1].toLowerCase(), base64: m[2] };
+    };
+    subs.forEach((s, i) => {
+      const t = selectedThumb(s);
+      const parsed = t && t.image ? parseDataUrl(t.image) : null;
+      if (!parsed) return;
+      const rowNum = 3 + i;
+      ws.getRow(rowNum).height = imgH * 0.75 + 6; // px→points, plus padding
+      const imgId = wb.addImage({ base64: parsed.base64, extension: parsed.extension });
+      ws.addImage(imgId, {
+        tl: { col: imageColIdx + 0.15, row: rowNum - 1 + 0.1 },
+        ext: { width: imgW, height: imgH },
+        editAs: 'oneCell',
+      });
+    });
+  }
+
   const filename = `${task.title.replace(/[^\w\- ]+/g, '') || 'task'}-submissions.xlsx`;
   res.setHeader(
     'Content-Type',
@@ -392,6 +427,7 @@ app.get('/api/tasks/:id', ah(async (req, res) => {
       id: s.id,
       heading: s.heading,
       atSeconds: s.at_seconds,
+      allowBack: !!s.allow_back, // shows a "go back to re-watch" button in the popup
       questions: s.questions.map(pubQ),
     })),
   });
