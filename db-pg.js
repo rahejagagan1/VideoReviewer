@@ -16,6 +16,14 @@ const pool = new Pool({
   max: 10,
 });
 
+// A pooled idle client can be dropped by the remote server/firewall (ECONNRESET).
+// node-postgres surfaces that as a pool 'error' event; without this handler an
+// unhandled 'error' would crash the whole process. We just log it — the pool
+// discards the dead client and opens a fresh one on the next query.
+pool.on('error', (err) => {
+  console.error('Postgres idle client error (recovered):', err.message);
+});
+
 // Heartbeat so at least one connection stays established even if a firewall/NAT
 // silently drops idle TCP — the next real query then skips the handshake.
 setInterval(() => {
