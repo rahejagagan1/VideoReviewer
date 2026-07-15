@@ -7,7 +7,20 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   // Set DATABASE_SSL=require for managed Postgres providers that need TLS.
   ssl: process.env.DATABASE_SSL === 'require' ? { rejectUnauthorized: false } : undefined,
+  // Keep a connection warm. The DB is remote, so a fresh connection pays a
+  // ~700ms TCP+SSL handshake; by default node-postgres reaps idle clients
+  // after 10s, which made the first action after any idle spell (e.g. logging
+  // in) feel laggy. Hold the idle client open and TCP-keepalive it instead.
+  keepAlive: true,
+  idleTimeoutMillis: 0,
+  max: 10,
 });
+
+// Heartbeat so at least one connection stays established even if a firewall/NAT
+// silently drops idle TCP — the next real query then skips the handshake.
+setInterval(() => {
+  pool.query('SELECT 1').catch(() => {});
+}, 60 * 1000).unref();
 
 // Timestamps are stored as 'YYYY-MM-DD HH:MM:SS' UTC strings, matching the
 // SQLite backend so the admin UI and CSV exports look identical.
@@ -95,6 +108,7 @@ const ready = (async () => {
   );
   await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_id INTEGER');
   await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_title TEXT');
+  await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_rating DOUBLE PRECISION');
   // Databases created before the 'rating' question type get their CHECK widened.
   for (const t of ['questions', 'default_questions']) {
     await pool.query(`ALTER TABLE ${t} DROP CONSTRAINT IF EXISTS ${t}_type_check`);
@@ -269,6 +283,17 @@ async function getSubmission(id) {
   return rows[0] || null;
 }
 
+// Question ids this submission already has answers for — lets the client
+// rebuild which in-video sections are done after a reload, so answered
+// sections are never asked twice even if the browser lost its local state.
+async function getAnsweredQuestionIds(id) {
+  const { rows } = await pool.query(
+    'SELECT question_id FROM answers WHERE submission_id = $1',
+    [id]
+  );
+  return rows.map((r) => r.question_id);
+}
+
 async function markVideoWatched(id, watchSeconds) {
   await pool.query(
     "UPDATE submissions SET status = 'video_watched', watch_seconds = $1 WHERE id = $2 AND status = 'started'",
@@ -278,10 +303,10 @@ async function markVideoWatched(id, watchSeconds) {
 
 // Records which thumbnail the user picked (title is snapshotted so the
 // choice survives later edits to the task's thumbnails).
-async function setSubmissionThumbnail(id, thumbnailId, title) {
+async function setSubmissionThumbnail(id, thumbnailId, title, rating) {
   await pool.query(
-    'UPDATE submissions SET thumbnail_id = $1, thumbnail_title = $2 WHERE id = $3',
-    [thumbnailId, title, id]
+    'UPDATE submissions SET thumbnail_id = $1, thumbnail_title = $2, thumbnail_rating = $3 WHERE id = $4',
+    [thumbnailId, title, rating ?? null, id]
   );
 }
 
@@ -355,6 +380,7 @@ module.exports = {
   deleteDefaultQuestion,
   createSubmission,
   getSubmission,
+  getAnsweredQuestionIds,
   markVideoWatched,
   setSubmissionThumbnail,
   upsertAnswer,

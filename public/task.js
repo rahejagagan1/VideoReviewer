@@ -71,23 +71,27 @@
     document.title = `${task.title} — Video Review Task`;
     formQuestions = task.questions;
     sections = (task.sections || []).slice().sort((a, b) => a.atSeconds - b.atSeconds);
+    // Rebuild which in-video sections are already answered from the server, so
+    // a reload (which may have lost local progress) never re-asks a section the
+    // user already completed.
+    if (state.submissionId && !state.done) await syncAnsweredSections();
     $('instrTitle').textContent = task.title;
     $('videoTitle').textContent = task.title;
     $('instrBody').textContent =
       task.instructions && task.instructions.trim()
         ? task.instructions
-        : `Welcome, and thank you for taking part in this video review!
+        : `Welcome, and thank you for taking part in this video review.
 
-Please read these instructions carefully before you start:
+Your role is to watch the video and share your natural, honest reaction. Please focus on how the video makes you feel, what keeps you interested, and where your attention drops.
 
-1. Watch the video carefully. You can play, pause, rewind and fast-forward at any time.
-2. Questions will pop up over the video at certain moments. Answer them to continue watching.
-3. Turn your sound on and watch in a quiet place so you don't miss anything.
-4. Don't worry about interruptions. If the page reloads, your progress is saved and the video continues from where you left off (on this same device and browser).
-5. When the video ends, press "Next" to open the feedback questions.
-6. Press "Next" when you are ready, then answer the questions. Questions marked with * are required.
-7. Be honest. There are no right or wrong answers. We want your genuine opinion.
-8. You can submit only once, so review your answers before pressing "Submit feedback".
+1. Find a quiet place and turn your sound on so you don't miss anything.
+2. Please watch the video from start to finish. Try not to switch tabs or apps — the video will pause automatically if you do, to make sure nothing is missed.
+3. Short questions will appear over the video at certain moments. Answer each one to continue watching — this helps us capture your reaction as it happens.
+4. The video controls (skip, rewind and the progress bar) stay locked until you answer the first set of pop-up questions. After you complete that first section, the controls unlock and you can move through the video freely.
+5. Your progress is saved automatically. If the page reloads, you'll pick up right where you left off (on this same device and browser).
+6. When the video finishes, press "Next" to continue to any remaining questions.
+7. There are no right or wrong answers — we simply want your genuine opinion. Questions marked with an asterisk (*) are required.
+8. You can submit only once, so please review your answers before you submit.
 
 When you're ready, tick the box below and press "Play Video".`;
 
@@ -162,6 +166,13 @@ When you're ready, tick the box below and press "Play Video".`;
   }
 
   let selectedThumb = null;
+  let thumbRatingEl = null;
+
+  // Next unlocks only once the user has BOTH picked a thumbnail and rated them.
+  function updateThumbNext() {
+    const rated = Number(thumbRatingEl && thumbRatingEl.dataset.value) > 0;
+    $('thumbNextBtn').disabled = !(selectedThumb && rated);
+  }
 
   function renderThumbs() {
     const grid = $('thumbGrid');
@@ -180,26 +191,34 @@ When you're ready, tick the box below and press "Play Video".`;
         selectedThumb = t;
         grid.querySelectorAll('.thumb-option').forEach((el) => el.classList.remove('selected'));
         card.classList.add('selected');
-        $('thumbNextBtn').disabled = false;
+        updateThumbNext();
       });
       grid.appendChild(card);
     });
+    // Overall star rating for the thumbnails section (reuses the shared widget).
+    const holder = $('thumbRating');
+    holder.innerHTML = '';
+    thumbRatingEl = makeStarRating({ id: 'thumb' }, 'thumbRating');
+    thumbRatingEl.addEventListener('click', updateThumbNext);
+    holder.appendChild(thumbRatingEl);
   }
 
   $('thumbNextBtn').addEventListener('click', async () => {
-    if (!selectedThumb) return;
+    const rating = Number(thumbRatingEl && thumbRatingEl.dataset.value) || 0;
+    if (!selectedThumb || !(rating > 0)) return;
     $('thumbError').textContent = '';
     $('thumbNextBtn').disabled = true;
     try {
       await api(`/api/submissions/${state.submissionId}/thumbnail`, {
         thumbnailId: selectedThumb.id,
+        rating,
       });
       saveState({ thumbPicked: selectedThumb.id });
       showStage('video');
       initPlayer();
     } catch (err) {
       $('thumbError').textContent = err.message;
-      $('thumbNextBtn').disabled = false;
+      updateThumbNext();
     }
   });
 
@@ -217,7 +236,10 @@ When you're ready, tick the box below and press "Play Video".`;
     maxWatched = Math.max(0, Number(state.videoTime) || 0);
     lastTime = maxWatched;
     lastProgressSave = maxWatched;
-    enableSeekControls();
+    // Seeking stays LOCKED until the first in-video section is submitted.
+    // Tasks with no sections keep free seek control from the start; on reload,
+    // stay unlocked if the first section was already cleared.
+    if (firstSectionCleared()) enableSeekControls();
     if (state.watched) unlockSeeking();
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
@@ -286,7 +308,10 @@ When you're ready, tick the box below and press "Play Video".`;
 
   function setPlayingUI(playing) {
     $('bigPlay').style.opacity = playing ? '0' : '1';
-    $('playPauseBtn').textContent = playing ? '⏸ Pause' : '▶ Play';
+    $('playPauseBtn').textContent = playing ? '⏸' : '▶';
+    $('playPauseBtn').title = playing ? 'Pause' : 'Play';
+    // While playing, the overlaid controls auto-hide until the user hovers.
+    $('videoShell').classList.toggle('playing', playing);
   }
 
   function togglePlay() {
@@ -483,10 +508,34 @@ When you're ready, tick the box below and press "Play Video".`;
     return inp ? inp.value.trim() : '';
   }
 
+  // Ask the server which questions this submission already answered and mark
+  // the matching sections done. Keeps answered sections from reappearing after
+  // a reload even if this browser's saved progress was lost.
+  async function syncAnsweredSections() {
+    try {
+      const { questionIds } = await api(`/api/submissions/${state.submissionId}/answered`);
+      const answered = new Set(questionIds);
+      const done = new Set(state.answeredSections || []);
+      for (const s of sections) {
+        if (s.questions.length && s.questions.every((q) => answered.has(q.id))) done.add(s.id);
+      }
+      saveState({ answeredSections: [...done] });
+    } catch {}
+  }
+
+  // True once the earliest section has been answered/skipped (or there are no
+  // sections at all) — the moment seeking is allowed to open up.
+  function firstSectionCleared() {
+    if (!sections.length) return true;
+    return new Set(state.answeredSections || []).has(sections[0].id);
+  }
+
   function markSectionDone(id) {
     const arr = state.answeredSections || [];
     if (!arr.includes(id)) arr.push(id);
     saveState({ answeredSections: arr });
+    // Clearing the first section hands the user free seek control.
+    if (sections.length && id === sections[0].id) enableSeekControls();
   }
 
   function closeQuizAndContinue() {
@@ -549,7 +598,7 @@ When you're ready, tick the box below and press "Play Video".`;
     } catch {}
   }
 
-  // Seek controls are available from the very start.
+  // Reveals the skip buttons and makes the progress bar scrubbable.
   function enableSeekControls() {
     seekUnlocked = true;
     $('back10Btn').classList.remove('hidden');
@@ -562,8 +611,6 @@ When you're ready, tick the box below and press "Play Video".`;
     enableSeekControls();
     videoDone = true;
     $('nextBtn').classList.remove('hidden');
-    $('videoNote').textContent =
-      '✅ Video finished! Press "Next" when you are ready for the feedback questions.';
   }
 
   function seekTo(t) {
@@ -607,6 +654,7 @@ When you're ready, tick the box below and press "Play Video".`;
         saveState({ done: true });
         showStage('thanks');
       } catch (err) {
+        $('videoNote').classList.remove('hidden');
         $('videoNote').textContent = err.message;
         $('nextBtn').disabled = false;
       }
@@ -627,7 +675,7 @@ When you're ready, tick the box below and press "Play Video".`;
 
   // Blur player buttons after a click so pressing Space afterwards doesn't
   // re-trigger the focused button on top of the Space shortcut.
-  document.querySelectorAll('.player-bar .btn').forEach((b) =>
+  document.querySelectorAll('.yt-controls button').forEach((b) =>
     b.addEventListener('click', () => b.blur())
   );
 

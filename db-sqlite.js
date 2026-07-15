@@ -93,6 +93,8 @@ db.exec(`
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_id INTEGER');
   if (!subCols.includes('thumbnail_title'))
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_title TEXT');
+  if (!subCols.includes('thumbnail_rating'))
+    db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_rating REAL');
 }
 
 // Older databases have a type CHECK that predates 'rating'. SQLite can't alter
@@ -284,6 +286,16 @@ function getSubmission(id) {
   return db.prepare('SELECT * FROM submissions WHERE id = ?').get(id);
 }
 
+// Question ids this submission already has answers for — lets the client
+// rebuild which in-video sections are done after a reload, so answered
+// sections are never asked twice even if the browser lost its local state.
+function getAnsweredQuestionIds(id) {
+  return db
+    .prepare('SELECT question_id FROM answers WHERE submission_id = ?')
+    .all(id)
+    .map((r) => r.question_id);
+}
+
 function markVideoWatched(id, watchSeconds) {
   db.prepare(
     "UPDATE submissions SET status = 'video_watched', watch_seconds = ? WHERE id = ? AND status = 'started'"
@@ -292,10 +304,10 @@ function markVideoWatched(id, watchSeconds) {
 
 // Records which thumbnail the user picked (title is snapshotted so the
 // choice survives later edits to the task's thumbnails).
-function setSubmissionThumbnail(id, thumbnailId, title) {
-  db.prepare('UPDATE submissions SET thumbnail_id = ?, thumbnail_title = ? WHERE id = ?').run(
-    thumbnailId, title, id
-  );
+function setSubmissionThumbnail(id, thumbnailId, title, rating) {
+  db.prepare(
+    'UPDATE submissions SET thumbnail_id = ?, thumbnail_title = ?, thumbnail_rating = ? WHERE id = ?'
+  ).run(thumbnailId, title, rating ?? null, id);
 }
 
 // Stores/overwrites one answer immediately (used for in-video timed questions).
@@ -342,6 +354,7 @@ module.exports = {
   deleteDefaultQuestion,
   createSubmission,
   getSubmission,
+  getAnsweredQuestionIds,
   markVideoWatched,
   setSubmissionThumbnail,
   upsertAnswer,
