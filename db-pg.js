@@ -108,6 +108,8 @@ const ready = (async () => {
   `);
   // Databases created before newer columns existed get them added.
   await pool.query('ALTER TABLE questions ADD COLUMN IF NOT EXISTS at_seconds DOUBLE PRECISION');
+  // Lets a section offer a "go back to re-watch" (cancel) button.
+  await pool.query('ALTER TABLE sections ADD COLUMN IF NOT EXISTS allow_back INTEGER NOT NULL DEFAULT 0');
   await pool.query(
     'ALTER TABLE questions ADD COLUMN IF NOT EXISTS section_id INTEGER REFERENCES sections(id) ON DELETE CASCADE'
   );
@@ -208,45 +210,95 @@ async function deleteTask(id) {
   await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
 }
 
+// Applies the builder's questions/sections/thumbnails to a task. Rows that carry
+// an existing id are UPDATED in place (so their submitted answers are kept);
+// rows without an id are inserted; rows no longer present are deleted. Only genuinely
+// removed questions lose their answers (via ON DELETE CASCADE) — editing a label,
+// reordering, or retiming a section no longer wipes existing responses.
 async function replaceQuestions(taskId, questions, sections = [], thumbnails = [], feedbackEnabled = true) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM questions WHERE task_id = $1', [taskId]);
-    await client.query('DELETE FROM sections WHERE task_id = $1', [taskId]);
-    await client.query('DELETE FROM thumbnails WHERE task_id = $1', [taskId]);
     await client.query('UPDATE tasks SET feedback_enabled = $1 WHERE id = $2', [
       feedbackEnabled ? 1 : 0, taskId,
     ]);
+
+    // ---- thumbnails (ids preserved so submissions' thumbnail_id stays valid) ----
+    const keepThumbIds = thumbnails.filter((t) => t.id).map((t) => Number(t.id));
+    await client.query(
+      'DELETE FROM thumbnails WHERE task_id = $1 AND NOT (id = ANY($2::int[]))',
+      [taskId, keepThumbIds]
+    );
     for (let ti = 0; ti < thumbnails.length; ti++) {
-      await client.query(
-        'INSERT INTO thumbnails (task_id, position, title, image) VALUES ($1, $2, $3, $4)',
-        [taskId, ti, thumbnails[ti].title, thumbnails[ti].image]
-      );
-    }
-    let pos = 0;
-    const sorted = [...sections].sort((a, b) => a.atSeconds - b.atSeconds);
-    for (let si = 0; si < sorted.length; si++) {
-      const s = sorted[si];
-      const { rows } = await client.query(
-        'INSERT INTO sections (task_id, position, heading, at_seconds) VALUES ($1, $2, $3, $4) RETURNING id',
-        [taskId, si, s.heading, Number(s.atSeconds)]
-      );
-      for (const q of s.questions) {
+      const t = thumbnails[ti];
+      if (t.id) {
         await client.query(
-          'INSERT INTO questions (task_id, position, type, label, required, options, at_seconds, section_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [taskId, pos++, q.type, q.label, q.required ? 1 : 0,
-            JSON.stringify(q.options || []), null, rows[0].id]
+          'UPDATE thumbnails SET position = $1, title = $2, image = $3 WHERE id = $4 AND task_id = $5',
+          [ti, t.title, t.image, Number(t.id), taskId]
+        );
+      } else {
+        await client.query(
+          'INSERT INTO thumbnails (task_id, position, title, image) VALUES ($1, $2, $3, $4)',
+          [taskId, ti, t.title, t.image]
         );
       }
     }
-    for (const q of questions) {
-      await client.query(
-        'INSERT INTO questions (task_id, position, type, label, required, options, at_seconds, section_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-        [taskId, pos++, q.type, q.label, q.required ? 1 : 0,
-          JSON.stringify(q.options || []), null, null]
-      );
+
+    // ---- sections (upsert; remember each one's db id for its questions) ----
+    const sorted = [...sections].sort((a, b) => a.atSeconds - b.atSeconds);
+    const keepSectionIds = [];
+    for (let si = 0; si < sorted.length; si++) {
+      const s = sorted[si];
+      if (s.id) {
+        await client.query(
+          'UPDATE sections SET position = $1, heading = $2, at_seconds = $3, allow_back = $4 WHERE id = $5 AND task_id = $6',
+          [si, s.heading, Number(s.atSeconds), s.allowBack ? 1 : 0, Number(s.id), taskId]
+        );
+        s._dbId = Number(s.id);
+      } else {
+        const { rows } = await client.query(
+          'INSERT INTO sections (task_id, position, heading, at_seconds, allow_back) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+          [taskId, si, s.heading, Number(s.atSeconds), s.allowBack ? 1 : 0]
+        );
+        s._dbId = rows[0].id;
+      }
+      keepSectionIds.push(s._dbId);
     }
+
+    // ---- questions (upsert in place; delete removed) ----
+    const incoming = [];
+    let pos = 0;
+    for (const s of sorted) for (const q of s.questions) incoming.push({ q, sectionId: s._dbId, pos: pos++ });
+    for (const q of questions) incoming.push({ q, sectionId: null, pos: pos++ });
+
+    const keepQIds = incoming.filter((x) => x.q.id).map((x) => Number(x.q.id));
+    await client.query(
+      'DELETE FROM questions WHERE task_id = $1 AND NOT (id = ANY($2::int[]))',
+      [taskId, keepQIds]
+    );
+    for (const { q, sectionId, pos } of incoming) {
+      const opts = JSON.stringify(q.options || []);
+      if (q.id) {
+        await client.query(
+          `UPDATE questions SET position = $1, type = $2, label = $3, required = $4,
+             options = $5, at_seconds = $6, section_id = $7 WHERE id = $8 AND task_id = $9`,
+          [pos, q.type, q.label, q.required ? 1 : 0, opts, null, sectionId, Number(q.id), taskId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO questions (task_id, position, type, label, required, options, at_seconds, section_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [taskId, pos, q.type, q.label, q.required ? 1 : 0, opts, null, sectionId]
+        );
+      }
+    }
+
+    // Remove sections the user deleted (safe: kept questions already re-pointed above).
+    await client.query(
+      'DELETE FROM sections WHERE task_id = $1 AND NOT (id = ANY($2::int[]))',
+      [taskId, keepSectionIds]
+    );
+
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');

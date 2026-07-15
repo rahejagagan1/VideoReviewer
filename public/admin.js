@@ -27,7 +27,7 @@ When you're ready, tick the box below and press "Play Video".`;
       questions: [
         { type: 'paragraph', label: 'Was the introduction engaging?', required: true, options: [] },
         { type: 'paragraph', label: 'Would you continue watching after the first 30 seconds?', required: true, options: [] },
-        { type: 'paragraph', label: 'Did the video make you want to watch until the end?', required: true, options: [] },
+        { type: 'paragraph', label: 'Did the intro make you feel like watching the video until the end?', required: true, options: [] },
         { type: 'paragraph', label: 'Which part made you the most curious?', required: true, options: [] },
         { type: 'paragraph', label: 'Which part felt boring or slow?', required: true, options: [] },
         { type: 'rating', label: 'RATING', required: true, options: [] },
@@ -565,6 +565,7 @@ When you're ready, tick the box below and press "Play Video".`;
     editorSections.push({
       heading: '',
       atTime: '',
+      allowBack: false,
       questions: defaultQuestions.map((d) => ({
         type: d.type,
         label: d.label,
@@ -616,6 +617,20 @@ When you're ready, tick the box below and press "Play Video".`;
       head.append(headingInput, atLabel, timeInput, delSec);
       card.appendChild(head);
 
+      // Per-section option: allow the viewer to go back and re-watch before answering.
+      const backLabel = document.createElement('label');
+      backLabel.className = 'toggle';
+      backLabel.style.margin = '10px 0 0';
+      const backChk = document.createElement('input');
+      backChk.type = 'checkbox';
+      backChk.checked = !!sec.allowBack;
+      backChk.addEventListener('change', () => (sec.allowBack = backChk.checked));
+      backLabel.append(
+        backChk,
+        document.createTextNode(' Let viewers go back to re-watch before answering (adds a Cancel button; they can only rewind, not skip ahead)')
+      );
+      card.appendChild(backLabel);
+
       const qwrap = document.createElement('div');
       qwrap.style.marginTop = '12px';
       card.appendChild(qwrap);
@@ -645,6 +660,7 @@ When you're ready, tick the box below and press "Play Video".`;
       instructions: $('taskInstructions').value,
     };
     const cleanQ = (q) => ({
+      ...(q.id ? { id: q.id } : {}), // preserve the DB id so answers survive edits
       type: q.type,
       required: q.required,
       label: q.label.trim(),
@@ -653,8 +669,10 @@ When you're ready, tick the box below and press "Play Video".`;
     const questions = editorQuestions.map(cleanQ).filter((q) => q.label);
     const sections = editorSections
       .map((s) => ({
+        ...(s.id ? { id: s.id } : {}),
         heading: s.heading.trim(),
         atSeconds: parseTimestamp(s.atTime),
+        allowBack: !!s.allowBack,
         questions: s.questions.map(cleanQ).filter((q) => q.label),
       }))
       .filter((s) => s.heading || s.questions.length);
@@ -673,7 +691,11 @@ When you're ready, tick the box below and press "Play Video".`;
       }
     }
     const thumbnails = editorThumbnails
-      .map((t) => ({ title: (t.title || '').trim(), image: (t.image || '').trim() }))
+      .map((t) => ({
+        ...(t.id ? { id: t.id } : {}),
+        title: (t.title || '').trim(),
+        image: (t.image || '').trim(),
+      }))
       .filter((t) => t.title || t.image);
     for (const t of thumbnails) {
       if (!t.title) {
@@ -893,6 +915,7 @@ When you're ready, tick the box below and press "Play Video".`;
     $('taskVideoUrl').value = task.video_url;
     $('taskInstructions').value = task.instructions || DEFAULT_INSTRUCTIONS;
     const asEditorQ = (q) => ({
+      id: q.id, // keep the DB id so editing updates in place and preserves answers
       type: q.type,
       label: q.label,
       required: q.required,
@@ -902,11 +925,13 @@ When you're ready, tick the box below and press "Play Video".`;
     });
     editorQuestions = task.questions.filter((q) => q.section_id == null).map(asEditorQ);
     editorSections = (task.sections || []).map((s) => ({
+      id: s.id,
       heading: s.heading,
       atTime: formatTimestamp(s.at_seconds),
+      allowBack: !!s.allow_back,
       questions: s.questions.map(asEditorQ),
     }));
-    editorThumbnails = (task.thumbnails || []).map((t) => ({ title: t.title, image: t.image }));
+    editorThumbnails = (task.thumbnails || []).map((t) => ({ id: t.id, title: t.title, image: t.image }));
     $('feedbackToggle').checked = !!task.feedback_enabled;
     openEditorStep(1);
     show('editor');

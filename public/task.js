@@ -22,6 +22,7 @@
   let watchdog = null;
   let videoDone = false;
   let seekUnlocked = false; // becomes true after one full watch-through
+  let rewindUnlocked = false; // "go back to re-watch": rewind within watched range only
   let formQuestions = []; // asked in the feedback form after the video
   let sections = []; // question sections popped up during the video
   let quizOpen = false;
@@ -39,6 +40,25 @@
   function saveState(patch) {
     Object.assign(state, patch);
     localStorage.setItem(storeKey, JSON.stringify(state));
+  }
+
+  // ---------- in-progress answer drafts (survive a reload) ----------
+  // Every keystroke/selection is stored per question id, so a half-filled
+  // answer isn't lost if the page reloads before it's submitted.
+  function getDraft(qid) {
+    return (state.drafts || {})[qid];
+  }
+  function saveDraft(qid, value) {
+    const drafts = state.drafts || {};
+    const empty = value == null || value === '' || (Array.isArray(value) && !value.length);
+    if (empty) delete drafts[qid];
+    else drafts[qid] = value;
+    saveState({ drafts });
+  }
+  function clearDrafts(qids) {
+    const drafts = state.drafts || {};
+    for (const id of qids) delete drafts[id];
+    saveState({ drafts });
   }
 
   const stages = ['loading', 'notfound', 'instructions', 'thumbs', 'video', 'questions', 'thanks'];
@@ -343,8 +363,10 @@ When you're ready, tick the box below and press "Play Video".`;
       if (!playerReady) return;
       const t = player.getCurrentTime() || 0;
       // A jump bigger than ~2s means a seek happened (console tricks etc.) —
-      // snap back, unless the full video was already watched once.
-      if (!seekUnlocked && t > lastTime + 2.5) {
+      // snap back, unless the full video was already watched once. In rewind
+      // mode we allow moving anywhere up to the furthest point already watched,
+      // but never into unwatched territory.
+      if (!seekUnlocked && t > lastTime + 2.5 && (!rewindUnlocked || t > maxWatched + 0.5)) {
         player.seekTo(Math.min(lastTime, maxWatched), true);
         return;
       }
@@ -391,7 +413,7 @@ When you're ready, tick the box below and press "Play Video".`;
 
   // datasetKey is 'qid' (feedback form) or 'quizQid' (in-video popup), so the
   // collect functions can find the widget the same way they find inputs.
-  function makeStarRating(q, datasetKey) {
+  function makeStarRating(q, datasetKey, initial, onChange) {
     const wrap = document.createElement('div');
     wrap.className = 'star-rating';
     wrap.dataset[datasetKey] = q.id;
@@ -408,6 +430,7 @@ When you're ready, tick the box below and press "Play Video".`;
       wrap.dataset.value = v ? String(v) : '';
       out.textContent = v ? `${v} / 5` : '';
       paint(v);
+      if (onChange) onChange(wrap.dataset.value);
     };
     for (let i = 0; i < 5; i++) {
       const star = document.createElement('span');
@@ -431,6 +454,13 @@ When you're ready, tick the box below and press "Play Video".`;
     }
     wrap.addEventListener('mouseleave', () => paint(Number(wrap.dataset.value) || 0));
     wrap.appendChild(out);
+    // Restore a previously-saved (draft) value.
+    const iv = Number(initial);
+    if (iv > 0) {
+      wrap.dataset.value = String(iv);
+      out.textContent = `${iv} / 5`;
+      paint(iv);
+    }
     return wrap;
   }
 
@@ -449,6 +479,8 @@ When you're ready, tick the box below and press "Play Video".`;
     $('quizError').textContent = '';
     // Skip is only offered when nothing in the section is required.
     $('quizSkipBtn').classList.toggle('hidden', section.questions.some((q) => q.required));
+    // "Go back to re-watch" is offered only when the admin enabled it for this section.
+    $('quizBackBtn').classList.toggle('hidden', !section.allowBack);
     $('quizSubmitBtn').disabled = false;
     const body = $('quizBody');
     body.innerHTML = '';
@@ -460,6 +492,8 @@ When you're ready, tick the box below and press "Play Video".`;
       label.textContent = `${i + 1}. ${q.label}${q.required ? ' *' : ''}`;
       block.appendChild(label);
       if (q.type === 'mcq' || q.type === 'checkbox') {
+        const draft = getDraft(q.id);
+        const draftArr = Array.isArray(draft) ? draft : draft ? [draft] : [];
         q.options.forEach((opt) => {
           const row = document.createElement('label');
           row.className = 'toggle';
@@ -467,15 +501,26 @@ When you're ready, tick the box below and press "Play Video".`;
           inp.type = q.type === 'mcq' ? 'radio' : 'checkbox';
           inp.name = `quizq_${q.id}`;
           inp.value = opt;
+          if (draftArr.includes(opt)) inp.checked = true;
+          inp.addEventListener('change', () =>
+            saveDraft(
+              q.id,
+              q.type === 'mcq'
+                ? inp.value
+                : [...document.querySelectorAll(`input[name="quizq_${q.id}"]:checked`)].map((x) => x.value)
+            )
+          );
           row.append(inp, document.createTextNode(' ' + opt));
           block.appendChild(row);
         });
       } else if (q.type === 'rating') {
-        block.appendChild(makeStarRating(q, 'quizQid'));
+        block.appendChild(makeStarRating(q, 'quizQid', getDraft(q.id), (v) => saveDraft(q.id, v)));
       } else if (q.type === 'paragraph') {
         const ta = document.createElement('textarea');
         ta.dataset.quizQid = q.id;
         ta.placeholder = 'Your answer';
+        if (getDraft(q.id)) ta.value = getDraft(q.id);
+        ta.addEventListener('input', () => saveDraft(q.id, ta.value));
         block.appendChild(ta);
       } else {
         const inp = document.createElement('input');
@@ -483,6 +528,8 @@ When you're ready, tick the box below and press "Play Video".`;
         if (q.type === 'number') inp.step = 'any';
         inp.dataset.quizQid = q.id;
         inp.placeholder = 'Your answer';
+        if (getDraft(q.id)) inp.value = getDraft(q.id);
+        inp.addEventListener('input', () => saveDraft(q.id, inp.value));
         block.appendChild(inp);
       }
       body.appendChild(block);
@@ -572,6 +619,7 @@ When you're ready, tick the box below and press "Play Video".`;
     $('quizSubmitBtn').disabled = true;
     try {
       await api(`/api/submissions/${state.submissionId}/answer`, { answers });
+      clearDrafts(sec.questions.map((q) => q.id));
       markSectionDone(sec.id);
       closeQuizAndContinue();
     } catch (err) {
@@ -584,6 +632,21 @@ When you're ready, tick the box below and press "Play Video".`;
     if (!currentSection) return;
     markSectionDone(currentSection.id);
     closeQuizAndContinue();
+  });
+
+  // "Go back to re-watch": close the popup WITHOUT answering, jump 30 seconds
+  // back, and stay paused so the user can press play and re-watch when ready.
+  // The section is left pending, so it pops up again when they play back to it —
+  // with their partly-filled answers restored from the saved draft. They can
+  // rewind further but never skip past the point already watched.
+  $('quizBackBtn').addEventListener('click', () => {
+    if (!currentSection) return;
+    quizOpen = false;
+    currentSection = null;
+    $('quizOverlay').classList.add('hidden');
+    enableRewind();
+    seekTo(Math.max(0, (player.getCurrentTime() || 0) - 30));
+    try { player.pauseVideo(); } catch {}
   });
 
   // First full completion: record it, then hand the user free control.
@@ -606,6 +669,15 @@ When you're ready, tick the box below and press "Play Video".`;
     $('progressTrack').classList.add('seekable');
   }
 
+  // Rewind-only mode (from a section's "go back to re-watch"): the controls
+  // appear, but seeking is capped at the furthest point already watched.
+  function enableRewind() {
+    rewindUnlocked = true;
+    $('back10Btn').classList.remove('hidden');
+    $('fwd10Btn').classList.remove('hidden');
+    $('progressTrack').classList.add('seekable');
+  }
+
   // Called once the video has ended: reveals the way forward.
   function unlockSeeking() {
     enableSeekControls();
@@ -614,8 +686,10 @@ When you're ready, tick the box below and press "Play Video".`;
   }
 
   function seekTo(t) {
-    if (!seekUnlocked || !playerReady) return;
-    t = Math.max(0, Math.min(duration || 0, t));
+    if (!playerReady || (!seekUnlocked && !rewindUnlocked)) return;
+    // Fully unlocked → anywhere; rewind mode → only up to the furthest watched point.
+    const cap = seekUnlocked ? duration || 0 : maxWatched;
+    t = Math.max(0, Math.min(cap, t));
     lastTime = t;
     player.seekTo(t, true);
     updateBar(t);
@@ -624,7 +698,7 @@ When you're ready, tick the box below and press "Play Video".`;
   $('back10Btn').addEventListener('click', () => seekTo((player.getCurrentTime() || 0) - 10));
   $('fwd10Btn').addEventListener('click', () => seekTo((player.getCurrentTime() || 0) + 10));
   $('progressTrack').addEventListener('click', (e) => {
-    if (!seekUnlocked || !duration) return;
+    if ((!seekUnlocked && !rewindUnlocked) || !duration) return;
     const r = e.currentTarget.getBoundingClientRect();
     seekTo(((e.clientX - r.left) / r.width) * duration);
   });
@@ -744,13 +818,17 @@ When you're ready, tick the box below and press "Play Video".`;
         inp.step = 'any';
         wrap.appendChild(inp);
       } else if (q.type === 'rating') {
-        wrap.appendChild(makeStarRating(q, 'qid'));
+        wrap.appendChild(makeStarRating(q, 'qid', getDraft(q.id), (v) => saveDraft(q.id, v)));
       } else if (q.type === 'paragraph') {
         const ta = document.createElement('textarea');
         ta.dataset.qid = q.id;
         ta.placeholder = 'Your answer';
+        if (getDraft(q.id)) ta.value = getDraft(q.id);
+        ta.addEventListener('input', () => saveDraft(q.id, ta.value));
         wrap.appendChild(ta);
       } else if (q.type === 'mcq' || q.type === 'checkbox') {
+        const draft = getDraft(q.id);
+        const draftArr = Array.isArray(draft) ? draft : draft ? [draft] : [];
         q.options.forEach((opt) => {
           const row = document.createElement('label');
           row.className = 'toggle';
@@ -761,6 +839,15 @@ When you're ready, tick the box below and press "Play Video".`;
           inp.name = `q_${q.id}`;
           inp.value = opt;
           inp.dataset.qid = q.id;
+          if (draftArr.includes(opt)) inp.checked = true;
+          inp.addEventListener('change', () =>
+            saveDraft(
+              q.id,
+              q.type === 'mcq'
+                ? inp.value
+                : [...document.querySelectorAll(`input[name="q_${q.id}"]:checked`)].map((x) => x.value)
+            )
+          );
           row.append(inp, document.createTextNode(' ' + opt));
           wrap.appendChild(row);
         });
@@ -774,6 +861,8 @@ When you're ready, tick the box below and press "Play Video".`;
     inp.type = type;
     inp.dataset.qid = q.id;
     inp.placeholder = 'Your answer';
+    if (getDraft(q.id)) inp.value = getDraft(q.id);
+    inp.addEventListener('input', () => saveDraft(q.id, inp.value));
     return inp;
   }
 
@@ -818,6 +907,7 @@ When you're ready, tick the box below and press "Play Video".`;
     $('submitAnswersBtn').disabled = true;
     try {
       await api(`/api/submissions/${state.submissionId}/answers`, { answers });
+      clearDrafts(formQuestions.map((q) => q.id));
       saveState({ done: true });
       showStage('thanks');
     } catch (err) {

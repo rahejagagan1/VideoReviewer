@@ -427,6 +427,7 @@ app.get('/api/tasks/:id', ah(async (req, res) => {
       id: s.id,
       heading: s.heading,
       atSeconds: s.at_seconds,
+      allowBack: !!s.allow_back, // shows a "go back to re-watch" button in the popup
       questions: s.questions.map(pubQ),
     })),
   });
