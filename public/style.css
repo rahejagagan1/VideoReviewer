@@ -485,6 +485,17 @@ body.video-mode .center-wrap {
   min-width: 52px; font-variant-numeric: tabular-nums;
 }
 
+/* admin: the task list and task detail views break out of the narrow
+   column to ~80% of the screen. */
+#view-tasks,
+#view-detail {
+  width: min(84vw, 1600px);
+  min-width: 100%;
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 /* admin: question & answer view inside the submission modal */
 /* Grouped answer sections in the submission detail modal */
 .qa-section {
