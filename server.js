@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const ExcelJS = require('exceljs');
 const store = require('./db');
 
 const app = express();
@@ -232,13 +233,15 @@ app.get('/api/admin/tasks/:id/export.csv', requireAdmin, ah(async (req, res) => 
   const header = [
     'Name', 'Email', 'County', 'Country', 'Status',
     'Started At (UTC)', 'Completed At (UTC)', 'Watch Seconds',
-    ...(task.thumbnails.length ? ['Thumbnail Chosen'] : []),
+    ...(task.thumbnails.length ? ['Thumbnail Chosen', 'Thumbnail Rating'] : []),
     ...task.questions.map((q) => q.label),
   ];
   const rows = subs.map((s) => [
     s.name, s.email, s.county, s.country, s.status,
     s.started_at, s.completed_at || '', Math.round(s.watch_seconds),
-    ...(task.thumbnails.length ? [s.thumbnail_title || ''] : []),
+    ...(task.thumbnails.length
+      ? [s.thumbnail_title || '', s.thumbnail_rating != null ? `${s.thumbnail_rating} / 5` : '']
+      : []),
     ...task.questions.map((q) => s.answers[q.id] ?? ''),
   ]);
   const csv = [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
@@ -248,6 +251,152 @@ app.get('/api/admin/tasks/:id/export.csv', requireAdmin, ah(async (req, res) => 
     `attachment; filename="${task.title.replace(/[^\w\- ]+/g, '')}-submissions.csv"`
   );
   res.send('\uFEFF' + csv);
+}));
+
+// Real Excel (.xlsx) export \u2014 same data as the CSV but as a styled spreadsheet.
+app.get('/api/admin/tasks/:id/export.xlsx', requireAdmin, ah(async (req, res) => {
+  const task = await store.getTask(req.params.id);
+  if (!task) return res.status(404).send('Task not found');
+  const subs = await store.listSubmissions(req.params.id);
+
+  const fmtTime = (sec) => {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  // Column groups → drive both the merged "super header" row and the columns.
+  const groups = [];
+  groups.push({
+    title: 'Details',
+    cols: [
+      { label: 'Name', get: (s) => s.name },
+      { label: 'Email', get: (s) => s.email },
+      { label: 'County', get: (s) => s.county },
+      { label: 'Country', get: (s) => s.country },
+      { label: 'Status', get: (s) => s.status },
+      { label: 'Started At (UTC)', get: (s) => s.started_at },
+      { label: 'Completed At (UTC)', get: (s) => s.completed_at || '' },
+      { label: 'Watch Seconds', get: (s) => Math.round(s.watch_seconds) },
+    ],
+  });
+  // Resolve the thumbnail a submission picked. Match by id, then fall back to
+  // title, since editing a task recreates thumbnails with new ids.
+  const thumbById = new Map(task.thumbnails.map((t) => [t.id, t]));
+  const thumbByTitle = new Map(task.thumbnails.map((t) => [t.title, t]));
+  const selectedThumb = (s) =>
+    thumbById.get(s.thumbnail_id) || thumbByTitle.get(s.thumbnail_title) || null;
+
+  if (task.thumbnails.length) {
+    groups.push({
+      title: 'Thumbnail',
+      cols: [
+        { label: 'Chosen', get: (s) => s.thumbnail_title || '' },
+        { label: 'Rating', get: (s) => (s.thumbnail_rating != null ? `${s.thumbnail_rating} / 5` : '') },
+        // The image itself is floated over this (empty) cell after the sheet is built.
+        { label: 'Image', get: () => '', isImage: true },
+      ],
+    });
+  }
+  const answerCol = (q) => ({
+    label: q.label,
+    get: (s) => (q.type === 'rating' && s.answers[q.id] ? `${s.answers[q.id]} / 5` : s.answers[q.id] ?? ''),
+  });
+  (task.sections || []).forEach((sec, i) => {
+    if (!sec.questions.length) return;
+    groups.push({
+      title: `Section ${i + 1}: ${sec.heading} (at ${fmtTime(sec.at_seconds)})`,
+      cols: sec.questions.map(answerCol),
+    });
+  });
+  const freeQs = task.questions.filter((q) => q.section_id == null);
+  if (freeQs.length) groups.push({ title: 'After the video', cols: freeQs.map(answerCol) });
+
+  const flatCols = groups.flatMap((g) => g.cols);
+  const header = flatCols.map((c) => c.label);
+  const rows = subs.map((s) => flatCols.map((c) => c.get(s)));
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Video Reviewer';
+  const ws = wb.addWorksheet('Submissions', {
+    views: [{ state: 'frozen', ySplit: 2 }], // keep both header rows visible while scrolling
+  });
+
+  // Row 1: merged group titles. Row 2: individual column labels.
+  const superRow = new Array(flatCols.length).fill('');
+  let idx = 1;
+  const groupSpans = [];
+  for (const g of groups) {
+    superRow[idx - 1] = g.title;
+    groupSpans.push({ start: idx, end: idx + g.cols.length - 1 });
+    idx += g.cols.length;
+  }
+  ws.addRow(superRow);
+  ws.addRow(header);
+  rows.forEach((r) => ws.addRow(r));
+
+  // Auto-size columns (capped) and wrap long answer text.
+  ws.columns.forEach((col, i) => {
+    let max = String(header[i] || '').length;
+    col.eachCell({ includeEmpty: false }, (cell) => {
+      const len = cell.value == null ? 0 : String(cell.value).length;
+      if (len > max) max = len;
+    });
+    col.width = Math.min(Math.max(max + 2, 12), 50);
+    col.alignment = { vertical: 'top', wrapText: true };
+  });
+
+  // Alternating group colours for the super-header, so groups read at a glance.
+  const groupColors = ['FF4F46E5', 'FF0EA5A4', 'FFB45309', 'FF7C3AED', 'FFBE185D'];
+  groupSpans.forEach((span, gi) => {
+    if (span.end > span.start) ws.mergeCells(1, span.start, 1, span.end);
+    const cell = ws.getCell(1, span.start);
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: groupColors[gi % groupColors.length] } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
+  ws.getRow(1).height = 22;
+
+  // Style the column-label row (row 2) last so column alignment doesn't override it.
+  const head = ws.getRow(2);
+  head.font = { bold: true, color: { argb: 'FF1F2430' } };
+  head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF0F6' } };
+  head.alignment = { vertical: 'middle', wrapText: true };
+  head.height = 20;
+
+  // Embed the selected thumbnail image into the "Image" column, floated over
+  // each submission's cell (data rows start at spreadsheet row 3).
+  const imageColIdx = flatCols.findIndex((c) => c.isImage); // 0-based; -1 if none
+  if (imageColIdx >= 0) {
+    const imgW = 128, imgH = 72; // 16:9 preview in pixels
+    ws.getColumn(imageColIdx + 1).width = 20;
+    const parseDataUrl = (url) => {
+      const m = /^data:image\/(png|jpe?g|gif);base64,(.+)$/i.exec(url || '');
+      if (!m) return null;
+      return { extension: m[1].toLowerCase() === 'jpg' ? 'jpeg' : m[1].toLowerCase(), base64: m[2] };
+    };
+    subs.forEach((s, i) => {
+      const t = selectedThumb(s);
+      const parsed = t && t.image ? parseDataUrl(t.image) : null;
+      if (!parsed) return;
+      const rowNum = 3 + i;
+      ws.getRow(rowNum).height = imgH * 0.75 + 6; // px→points, plus padding
+      const imgId = wb.addImage({ base64: parsed.base64, extension: parsed.extension });
+      ws.addImage(imgId, {
+        tl: { col: imageColIdx + 0.15, row: rowNum - 1 + 0.1 },
+        ext: { width: imgW, height: imgH },
+        editAs: 'oneCell',
+      });
+    });
+  }
+
+  const filename = `${task.title.replace(/[^\w\- ]+/g, '') || 'task'}-submissions.xlsx`;
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  await wb.xlsx.write(res);
+  res.end();
 }));
 
 // ---------- public: user flow ----------
@@ -278,6 +427,7 @@ app.get('/api/tasks/:id', ah(async (req, res) => {
       id: s.id,
       heading: s.heading,
       atSeconds: s.at_seconds,
+      allowBack: !!s.allow_back, // shows a "go back to re-watch" button in the popup
       questions: s.questions.map(pubQ),
     })),
   });
@@ -312,7 +462,10 @@ app.post('/api/submissions/:sid/thumbnail', ah(async (req, res) => {
   const thumbnailId = Number((req.body || {}).thumbnailId);
   const thumb = task.thumbnails.find((t) => t.id === thumbnailId);
   if (!thumb) return res.status(400).json({ error: 'Unknown thumbnail.' });
-  await store.setSubmissionThumbnail(sub.id, thumb.id, thumb.title);
+  const rating = Number((req.body || {}).rating);
+  if (!(rating >= 0.5 && rating <= 5))
+    return res.status(400).json({ error: 'Please give the thumbnails a star rating.' });
+  await store.setSubmissionThumbnail(sub.id, thumb.id, thumb.title, rating);
   res.json({ ok: true });
 }));
 
@@ -322,6 +475,15 @@ app.post('/api/submissions/:sid/watched', ah(async (req, res) => {
   const watchSeconds = Number((req.body || {}).watchSeconds) || 0;
   await store.markVideoWatched(req.params.sid, watchSeconds);
   res.json({ ok: true });
+}));
+
+// Which question ids this submission already answered — the user page uses
+// this on reload to know which in-video sections are already done, so they
+// aren't asked again even if the browser's local progress was lost.
+app.get('/api/submissions/:sid/answered', ah(async (req, res) => {
+  const sub = await store.getSubmission(req.params.sid);
+  if (!sub) return res.status(404).json({ error: 'Submission not found' });
+  res.json({ questionIds: await store.getAnsweredQuestionIds(sub.id) });
 }));
 
 // Saves answers immediately — used by the in-video section popups, so the

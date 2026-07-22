@@ -93,6 +93,11 @@ db.exec(`
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_id INTEGER');
   if (!subCols.includes('thumbnail_title'))
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_title TEXT');
+  if (!subCols.includes('thumbnail_rating'))
+    db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_rating REAL');
+  const secCols = db.prepare('PRAGMA table_info(sections)').all().map((c) => c.name);
+  if (!secCols.includes('allow_back'))
+    db.exec('ALTER TABLE sections ADD COLUMN allow_back INTEGER NOT NULL DEFAULT 0');
 }
 
 // Older databases have a type CHECK that predates 'rating'. SQLite can't alter
@@ -218,36 +223,72 @@ function deleteTask(id) {
   db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
 }
 
+// Rows carrying an existing id are UPDATED in place (keeping their answers);
+// rows without an id are inserted; rows no longer present are deleted. Only truly
+// removed questions lose their answers (ON DELETE CASCADE) — editing a label,
+// reordering, or retiming a section no longer wipes existing responses.
 function replaceQuestions(taskId, questions, sections = [], thumbnails = [], feedbackEnabled = true) {
-  db.prepare('DELETE FROM questions WHERE task_id = ?').run(taskId);
-  db.prepare('DELETE FROM sections WHERE task_id = ?').run(taskId);
-  db.prepare('DELETE FROM thumbnails WHERE task_id = ?').run(taskId);
-  db.prepare('UPDATE tasks SET feedback_enabled = ? WHERE id = ?').run(
-    feedbackEnabled ? 1 : 0, taskId
-  );
-  const insT = db.prepare(
-    'INSERT INTO thumbnails (task_id, position, title, image) VALUES (?, ?, ?, ?)'
-  );
-  thumbnails.forEach((t, i) => insT.run(taskId, i, t.title, t.image));
-  const insQ = db.prepare(
-    'INSERT INTO questions (task_id, position, type, label, required, options, at_seconds, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  );
-  const insS = db.prepare(
-    'INSERT INTO sections (task_id, position, heading, at_seconds) VALUES (?, ?, ?, ?)'
-  );
-  let pos = 0;
-  [...sections]
-    .sort((a, b) => a.atSeconds - b.atSeconds)
-    .forEach((s, si) => {
-      const sectionId = insS.run(taskId, si, s.heading, Number(s.atSeconds)).lastInsertRowid;
-      for (const q of s.questions) {
-        insQ.run(taskId, pos++, q.type, q.label, q.required ? 1 : 0,
-          JSON.stringify(q.options || []), null, sectionId);
-      }
+  const deleteMissing = (table, keepIds) => {
+    if (keepIds.length) {
+      const ph = keepIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM ${table} WHERE task_id = ? AND id NOT IN (${ph})`).run(taskId, ...keepIds);
+    } else {
+      db.prepare(`DELETE FROM ${table} WHERE task_id = ?`).run(taskId);
+    }
+  };
+
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE tasks SET feedback_enabled = ? WHERE id = ?').run(
+      feedbackEnabled ? 1 : 0, taskId
+    );
+
+    // ---- thumbnails (ids preserved so submissions' thumbnail_id stays valid) ----
+    deleteMissing('thumbnails', thumbnails.filter((t) => t.id).map((t) => Number(t.id)));
+    const insT = db.prepare('INSERT INTO thumbnails (task_id, position, title, image) VALUES (?, ?, ?, ?)');
+    const updT = db.prepare('UPDATE thumbnails SET position = ?, title = ?, image = ? WHERE id = ? AND task_id = ?');
+    thumbnails.forEach((t, i) => {
+      if (t.id) updT.run(i, t.title, t.image, Number(t.id), taskId);
+      else insT.run(taskId, i, t.title, t.image);
     });
-  for (const q of questions) {
-    insQ.run(taskId, pos++, q.type, q.label, q.required ? 1 : 0,
-      JSON.stringify(q.options || []), null, null);
+
+    // ---- sections (upsert; remember each one's db id for its questions) ----
+    const insS = db.prepare('INSERT INTO sections (task_id, position, heading, at_seconds, allow_back) VALUES (?, ?, ?, ?, ?)');
+    const updS = db.prepare('UPDATE sections SET position = ?, heading = ?, at_seconds = ?, allow_back = ? WHERE id = ? AND task_id = ?');
+    const sorted = [...sections].sort((a, b) => a.atSeconds - b.atSeconds);
+    const keepSectionIds = [];
+    sorted.forEach((s, si) => {
+      if (s.id) {
+        updS.run(si, s.heading, Number(s.atSeconds), s.allowBack ? 1 : 0, Number(s.id), taskId);
+        s._dbId = Number(s.id);
+      } else {
+        s._dbId = Number(insS.run(taskId, si, s.heading, Number(s.atSeconds), s.allowBack ? 1 : 0).lastInsertRowid);
+      }
+      keepSectionIds.push(s._dbId);
+    });
+
+    // ---- questions (upsert in place; delete removed) ----
+    const incoming = [];
+    let pos = 0;
+    for (const s of sorted) for (const q of s.questions) incoming.push({ q, sectionId: s._dbId, pos: pos++ });
+    for (const q of questions) incoming.push({ q, sectionId: null, pos: pos++ });
+
+    deleteMissing('questions', incoming.filter((x) => x.q.id).map((x) => Number(x.q.id)));
+    const insQ = db.prepare('INSERT INTO questions (task_id, position, type, label, required, options, at_seconds, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const updQ = db.prepare('UPDATE questions SET position = ?, type = ?, label = ?, required = ?, options = ?, at_seconds = ?, section_id = ? WHERE id = ? AND task_id = ?');
+    for (const { q, sectionId, pos } of incoming) {
+      const opts = JSON.stringify(q.options || []);
+      if (q.id) updQ.run(pos, q.type, q.label, q.required ? 1 : 0, opts, null, sectionId, Number(q.id), taskId);
+      else insQ.run(taskId, pos, q.type, q.label, q.required ? 1 : 0, opts, null, sectionId);
+    }
+
+    // Remove sections the user deleted (safe: kept questions already re-pointed above).
+    deleteMissing('sections', keepSectionIds);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 }
 
@@ -284,6 +325,16 @@ function getSubmission(id) {
   return db.prepare('SELECT * FROM submissions WHERE id = ?').get(id);
 }
 
+// Question ids this submission already has answers for — lets the client
+// rebuild which in-video sections are done after a reload, so answered
+// sections are never asked twice even if the browser lost its local state.
+function getAnsweredQuestionIds(id) {
+  return db
+    .prepare('SELECT question_id FROM answers WHERE submission_id = ?')
+    .all(id)
+    .map((r) => r.question_id);
+}
+
 function markVideoWatched(id, watchSeconds) {
   db.prepare(
     "UPDATE submissions SET status = 'video_watched', watch_seconds = ? WHERE id = ? AND status = 'started'"
@@ -292,10 +343,10 @@ function markVideoWatched(id, watchSeconds) {
 
 // Records which thumbnail the user picked (title is snapshotted so the
 // choice survives later edits to the task's thumbnails).
-function setSubmissionThumbnail(id, thumbnailId, title) {
-  db.prepare('UPDATE submissions SET thumbnail_id = ?, thumbnail_title = ? WHERE id = ?').run(
-    thumbnailId, title, id
-  );
+function setSubmissionThumbnail(id, thumbnailId, title, rating) {
+  db.prepare(
+    'UPDATE submissions SET thumbnail_id = ?, thumbnail_title = ?, thumbnail_rating = ? WHERE id = ?'
+  ).run(thumbnailId, title, rating ?? null, id);
 }
 
 // Stores/overwrites one answer immediately (used for in-video timed questions).
@@ -342,6 +393,7 @@ module.exports = {
   deleteDefaultQuestion,
   createSubmission,
   getSubmission,
+  getAnsweredQuestionIds,
   markVideoWatched,
   setSubmissionThumbnail,
   upsertAnswer,

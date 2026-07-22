@@ -3,20 +3,67 @@
   const $ = (id) => document.getElementById(id);
   const views = ['login', 'tasks', 'editor', 'detail'];
 
-  const DEFAULT_INSTRUCTIONS = `Welcome, and thank you for taking part in this video review!
+  const DEFAULT_INSTRUCTIONS = `Welcome, and thank you for taking part in this video review.
 
-Please read these instructions carefully before you start:
+Your role is to watch the video and share your natural, honest reaction. Please focus on how the video makes you feel, what keeps you interested, and where your attention drops.
 
-1. Watch the video carefully. You can play, pause, rewind and fast-forward at any time.
-2. Questions will pop up over the video at certain moments. Answer them to continue watching.
-3. Turn your sound on and watch in a quiet place so you don't miss anything.
-4. Don't worry about interruptions. If the page reloads, your progress is saved and the video continues from where you left off (on this same device and browser).
-5. When the video ends, press "Next" to open the feedback questions.
-6. Press "Next" when you are ready, then answer the questions. Questions marked with * are required.
-7. Be honest. There are no right or wrong answers. We want your genuine opinion.
-8. You can submit only once, so review your answers before pressing "Submit feedback".
+1. Find a quiet place and turn your sound on so you don't miss anything.
+2. Please watch the video from start to finish. Try not to switch tabs or apps — the video will pause automatically if you do, to make sure nothing is missed.
+3. Short questions will appear over the video at certain moments. Answer each one to continue watching — this helps us capture your reaction as it happens.
+4. The video controls (skip, rewind and the progress bar) stay locked until you answer the first set of pop-up questions. After you complete that first section, the controls unlock and you can move through the video freely.
+5. Your progress is saved automatically. If the page reloads, you'll pick up right where you left off (on this same device and browser).
+6. When the video finishes, press "Next" to continue to any remaining questions.
+7. There are no right or wrong answers — we simply want your genuine opinion. Questions marked with an asterisk (*) are required.
+8. You can submit only once, so please review your answers before you submit.
 
 When you're ready, tick the box below and press "Play Video".`;
+
+  // In-video sections pre-filled into every NEW task's builder. Fully editable
+  // (or removable) per task before saving.
+  const DEFAULT_SECTIONS = [
+    {
+      heading: 'INTRO:',
+      atTime: '',
+      questions: [
+        { type: 'paragraph', label: 'Was the introduction engaging?', required: true, options: [] },
+        { type: 'paragraph', label: 'Would you continue watching after the first 30 seconds?', required: true, options: [] },
+        { type: 'paragraph', label: 'Did the intro make you feel like watching the video until the end?', required: true, options: [] },
+        { type: 'paragraph', label: 'Which part made you the most curious?', required: true, options: [] },
+        { type: 'paragraph', label: 'Which part felt boring or slow?', required: true, options: [] },
+        { type: 'rating', label: 'RATING', required: true, options: [] },
+      ],
+    },
+    {
+      heading: 'STORY:',
+      atTime: '',
+      questions: [
+        { type: 'paragraph', label: 'At what exact moment did you become interested?', required: true, options: [] },
+        { type: 'paragraph', label: 'At what timestamp did your attention start dropping?', required: true, options: [] },
+        { type: 'paragraph', label: 'Which section felt too slow or repetitive?', required: true, options: [] },
+        { type: 'paragraph', label: 'Was there any moment when you became confused?', required: false, options: [] },
+        { type: 'paragraph', label: 'What important question did you expect the documentary to answer?', required: true, options: [] },
+        { type: 'paragraph', label: 'Did the documentary answer that question?', required: true, options: [] },
+        { type: 'paragraph', label: 'Which scene had the strongest emotional impact?', required: true, options: [] },
+        { type: 'paragraph', label: 'Which scene would you remove?', required: true, options: [] },
+        { type: 'paragraph', label: 'Did any claim feel exaggerated, unfair, or unsupported?', required: true, options: [] },
+        { type: 'paragraph', label: 'Would you recommend it to someone?', required: true, options: [] },
+        { type: 'rating', label: 'RATING', required: true, options: [] },
+      ],
+    },
+  ];
+
+  // Fresh deep copy so edits to one new task never bleed into the template.
+  const cloneDefaultSections = () =>
+    DEFAULT_SECTIONS.map((s) => ({
+      heading: s.heading,
+      atTime: s.atTime,
+      questions: s.questions.map((q) => ({
+        type: q.type,
+        label: q.label,
+        required: q.required,
+        options: [...q.options],
+      })),
+    }));
 
   const TYPE_LABELS = {
     text: 'Short answer',
@@ -81,11 +128,18 @@ When you're ready, tick the box below and press "Play Video".`;
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('loginError').textContent = '';
+    const btn = $('loginBtn');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
     try {
       await api('/api/admin/login', { method: 'POST', body: { password: $('loginPassword').value } });
-      loadTasks();
+      await loadTasks(); // wait for the dashboard data before dropping the spinner
     } catch (err) {
       $('loginError').textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
     }
   });
 
@@ -181,7 +235,7 @@ When you're ready, tick the box below and press "Play Video".`;
     $('taskVideoUrl').value = '';
     $('taskInstructions').value = DEFAULT_INSTRUCTIONS;
     editorQuestions = [];
-    editorSections = [];
+    editorSections = cloneDefaultSections();
     editorThumbnails = [];
     $('feedbackToggle').checked = true;
     await loadDefaults();
@@ -511,6 +565,7 @@ When you're ready, tick the box below and press "Play Video".`;
     editorSections.push({
       heading: '',
       atTime: '',
+      allowBack: false,
       questions: defaultQuestions.map((d) => ({
         type: d.type,
         label: d.label,
@@ -562,6 +617,20 @@ When you're ready, tick the box below and press "Play Video".`;
       head.append(headingInput, atLabel, timeInput, delSec);
       card.appendChild(head);
 
+      // Per-section option: allow the viewer to go back and re-watch before answering.
+      const backLabel = document.createElement('label');
+      backLabel.className = 'toggle';
+      backLabel.style.margin = '10px 0 0';
+      const backChk = document.createElement('input');
+      backChk.type = 'checkbox';
+      backChk.checked = !!sec.allowBack;
+      backChk.addEventListener('change', () => (sec.allowBack = backChk.checked));
+      backLabel.append(
+        backChk,
+        document.createTextNode(' Let viewers go back to re-watch before answering (adds a Cancel button; they can only rewind, not skip ahead)')
+      );
+      card.appendChild(backLabel);
+
       const qwrap = document.createElement('div');
       qwrap.style.marginTop = '12px';
       card.appendChild(qwrap);
@@ -591,6 +660,7 @@ When you're ready, tick the box below and press "Play Video".`;
       instructions: $('taskInstructions').value,
     };
     const cleanQ = (q) => ({
+      ...(q.id ? { id: q.id } : {}), // preserve the DB id so answers survive edits
       type: q.type,
       required: q.required,
       label: q.label.trim(),
@@ -599,8 +669,10 @@ When you're ready, tick the box below and press "Play Video".`;
     const questions = editorQuestions.map(cleanQ).filter((q) => q.label);
     const sections = editorSections
       .map((s) => ({
+        ...(s.id ? { id: s.id } : {}),
         heading: s.heading.trim(),
         atSeconds: parseTimestamp(s.atTime),
+        allowBack: !!s.allowBack,
         questions: s.questions.map(cleanQ).filter((q) => q.label),
       }))
       .filter((s) => s.heading || s.questions.length);
@@ -619,7 +691,11 @@ When you're ready, tick the box below and press "Play Video".`;
       }
     }
     const thumbnails = editorThumbnails
-      .map((t) => ({ title: (t.title || '').trim(), image: (t.image || '').trim() }))
+      .map((t) => ({
+        ...(t.id ? { id: t.id } : {}),
+        title: (t.title || '').trim(),
+        image: (t.image || '').trim(),
+      }))
       .filter((t) => t.title || t.image);
     for (const t of thumbnails) {
       if (!t.title) {
@@ -672,7 +748,7 @@ When you're ready, tick the box below and press "Play Video".`;
       task.video_url
     )}</a> · Created ${esc(task.created_at)} UTC · ${task.questions.length} questions`;
     $('detailShareLink').textContent = taskLink(task.id);
-    $('exportCsvBtn').href = `/api/admin/tasks/${task.id}/export.csv`;
+    $('exportCsvBtn').href = `/api/admin/tasks/${task.id}/export.xlsx`;
     $('detailSubCount').textContent = submissions.length;
 
     const table = $('subsTable');
@@ -693,8 +769,7 @@ When you're ready, tick the box below and press "Play Video".`;
           <th></th>
           <th>Name</th><th>Email</th><th>County</th><th>Country</th><th>Status</th>
           <th>Started (UTC)</th><th>Completed (UTC)</th>
-          ${task.thumbnails.length ? '<th>Thumbnail</th>' : ''}
-          ${task.questions.map((q) => `<th>${esc(q.label)}</th>`).join('')}
+          ${task.thumbnails.length ? '<th>Thumbnail</th><th>Thumb Rating</th>' : ''}
         </tr></thead><tbody>` +
         submissions
           .map(
@@ -707,8 +782,7 @@ When you're ready, tick the box below and press "Play Video".`;
           <td>${badge(s.status)}</td>
           <td>${esc(s.started_at)}</td>
           <td>${esc(s.completed_at || '—')}</td>
-          ${task.thumbnails.length ? `<td>${esc(s.thumbnail_title || '—')}</td>` : ''}
-          ${task.questions.map((q) => `<td class="wrap">${esc(s.answers[q.id] ?? '—')}</td>`).join('')}
+          ${task.thumbnails.length ? `<td>${esc(s.thumbnail_title || '—')}</td><td>${s.thumbnail_rating != null ? `${esc(s.thumbnail_rating)} ★` : '—'}</td>` : ''}
         </tr>`
           )
           .join('') +
@@ -730,40 +804,98 @@ When you're ready, tick the box below and press "Play Video".`;
     $('subModalMeta').innerHTML =
       `${esc(sub.email)} · ${esc(sub.county)}, ${esc(sub.country)}<br>` +
       `${esc(statusText[sub.status] || sub.status)} · Started ${esc(sub.started_at)} UTC` +
-      (sub.completed_at ? ` · Completed ${esc(sub.completed_at)} UTC` : '') +
-      (sub.thumbnail_title ? `<br>🖼 Thumbnail chosen: <b>${esc(sub.thumbnail_title)}</b>` : '');
-    const secById = new Map((currentTask.sections || []).map((s) => [s.id, s]));
-    $('subModalBody').innerHTML = currentTask.questions.length
-      ? currentTask.questions
-          .map((q, i) => {
-            const a = sub.answers[q.id];
-            const has = a != null && String(a).trim() !== '';
-            const sec = q.section_id != null ? secById.get(q.section_id) : null;
-            return `<div class="qa">
-              <div class="qa-q">${i + 1}. ${esc(q.label)}${
-                sec
-                  ? ` <span class="badge">⏱ ${esc(sec.heading)} · at ${formatTimestamp(sec.at_seconds)}</span>`
-                  : q.at_seconds != null
-                  ? ` <span class="badge">⏱ asked at ${formatTimestamp(q.at_seconds)}</span>`
-                  : ''
-              }</div>
-              <div class="qa-a">${
-                has
-                  ? q.type === 'rating'
-                    ? `<span style="color:#eab308">★</span> ${esc(a)} / 5`
-                    : esc(a)
-                  : '<span class="muted">No answer yet</span>'
-              }</div>
-            </div>`;
-          })
-          .join('')
-      : '<p class="muted">This task has no questions.</p>';
+      (sub.completed_at ? ` · Completed ${esc(sub.completed_at)} UTC` : '');
+
+    // One answer block.
+    let n = 0;
+    const renderQ = (q) => {
+      const a = sub.answers[q.id];
+      const has = a != null && String(a).trim() !== '';
+      return `<div class="qa">
+        <div class="qa-q">${++n}. ${esc(q.label)}</div>
+        <div class="qa-a">${
+          has
+            ? q.type === 'rating'
+              ? `<span style="color:#eab308">★</span> ${esc(a)} / 5`
+              : esc(a)
+            : '<span class="muted">No answer yet</span>'
+        }</div>
+      </div>`;
+    };
+
+    let html = '';
+
+    // Which thumbnail the user picked (with the actual image).
+    if (sub.thumbnail_id != null || sub.thumbnail_title) {
+      // Match by id, falling back to title: editing a task recreates thumbnails
+      // with new ids, so an older submission's stored id may no longer exist.
+      const thumbs = currentTask.thumbnails || [];
+      const t =
+        thumbs.find((x) => x.id === sub.thumbnail_id) ||
+        thumbs.find((x) => x.title === sub.thumbnail_title);
+      const title = sub.thumbnail_title || (t && t.title) || '';
+      html += `<div class="qa-section">
+        <h3 class="qa-section-title">🖼 Thumbnail selected: ${esc(title)}${
+          sub.thumbnail_rating != null
+            ? ` <span class="muted small">· ⭐ ${esc(sub.thumbnail_rating)} / 5</span>`
+            : ''
+        }</h3>
+        ${t && t.image ? `<div class="qa-thumb-wrap">
+          <img class="qa-thumb" src="${esc(t.image)}" alt="selected thumbnail">
+          <div class="qa-thumb-overlay"><span>⛶</span></div>
+        </div>` : ''}
+      </div>`;
+    }
+
+    // Answers grouped by in-video section, in the order they appear.
+    for (const sec of currentTask.sections || []) {
+      if (!sec.questions.length) continue;
+      html += `<div class="qa-section">
+        <h3 class="qa-section-title">⏱ ${esc(sec.heading)} <span class="muted small">· at ${formatTimestamp(sec.at_seconds)}</span></h3>
+        ${sec.questions.map(renderQ).join('')}
+      </div>`;
+    }
+
+    // Feedback-form questions asked after the video (no section).
+    const freeQs = currentTask.questions.filter((q) => q.section_id == null);
+    if (freeQs.length) {
+      html += `<div class="qa-section">
+        <h3 class="qa-section-title">📝 After the video</h3>
+        ${freeQs.map(renderQ).join('')}
+      </div>`;
+    }
+
+    $('subModalBody').innerHTML =
+      html || '<p class="muted">This task has no questions.</p>';
     $('subModal').classList.remove('hidden');
   }
 
   $('subModalClose').addEventListener('click', () => $('subModal').classList.add('hidden'));
   $('subModal').addEventListener('click', (e) => {
     if (e.target.id === 'subModal') $('subModal').classList.add('hidden');
+  });
+
+  // Click the selected thumbnail to view it full screen.
+  function openLightbox(src) {
+    let box = document.getElementById('imgLightbox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'imgLightbox';
+      box.className = 'img-lightbox hidden';
+      box.innerHTML = '<img alt="thumbnail full view" />';
+      const close = () => box.classList.add('hidden');
+      box.addEventListener('click', close);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') close();
+      });
+      document.body.appendChild(box);
+    }
+    box.querySelector('img').src = src;
+    box.classList.remove('hidden');
+  }
+  $('subModalBody').addEventListener('click', (e) => {
+    const wrap = e.target.closest('.qa-thumb-wrap');
+    if (wrap) openLightbox(wrap.querySelector('img').src);
   });
 
   $('detailBackBtn').addEventListener('click', loadTasks);
@@ -783,6 +915,7 @@ When you're ready, tick the box below and press "Play Video".`;
     $('taskVideoUrl').value = task.video_url;
     $('taskInstructions').value = task.instructions || DEFAULT_INSTRUCTIONS;
     const asEditorQ = (q) => ({
+      id: q.id, // keep the DB id so editing updates in place and preserves answers
       type: q.type,
       label: q.label,
       required: q.required,
@@ -792,11 +925,13 @@ When you're ready, tick the box below and press "Play Video".`;
     });
     editorQuestions = task.questions.filter((q) => q.section_id == null).map(asEditorQ);
     editorSections = (task.sections || []).map((s) => ({
+      id: s.id,
       heading: s.heading,
       atTime: formatTimestamp(s.at_seconds),
+      allowBack: !!s.allow_back,
       questions: s.questions.map(asEditorQ),
     }));
-    editorThumbnails = (task.thumbnails || []).map((t) => ({ title: t.title, image: t.image }));
+    editorThumbnails = (task.thumbnails || []).map((t) => ({ id: t.id, title: t.title, image: t.image }));
     $('feedbackToggle').checked = !!task.feedback_enabled;
     openEditorStep(1);
     show('editor');

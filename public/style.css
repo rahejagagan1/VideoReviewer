@@ -308,42 +308,85 @@ body.video-mode .center-wrap {
 .section-head input[type="text"]:first-child { flex: 1 1 260px; font-weight: 600; }
 .section-card .q-card { background: #fff; }
 
-.player-bar {
-  display: flex; align-items: center; gap: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin-top: 12px;
+/* ---- YouTube-style overlaid player controls ---- */
+.yt-controls {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  z-index: 6;
+  padding: 18px 14px 8px;
+  background: linear-gradient(to top,
+    rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0.45) 45%, rgba(0, 0, 0, 0) 100%);
+  opacity: 1;
+  transition: opacity 0.25s ease;
+  -webkit-user-select: none; user-select: none;
 }
-.progress-track.seekable { cursor: pointer; }
+/* Auto-hide while the video is playing, reveal on hover (like YouTube). */
+.video-shell.playing .yt-controls { opacity: 0; pointer-events: none; }
+.video-shell.playing:hover .yt-controls,
+.video-shell.playing .yt-controls:focus-within { opacity: 1; pointer-events: auto; }
+.video-shell.playing:hover { cursor: default; }
+
+.yt-controls-row { display: flex; align-items: center; gap: 4px; }
+.yt-left { display: flex; align-items: center; gap: 2px; }
+.yt-right { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+
+.yt-btn {
+  background: transparent; border: none; color: #fff; cursor: pointer;
+  width: 40px; height: 40px; border-radius: 50%;
+  font-size: 18px; line-height: 1; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease;
+}
+.yt-btn:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* Action row below the player (holds the "Next" button once the video ends). */
+.video-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 /* Fullscreen mode for the player card (triggered by the ⛶ button) */
 #videoCard:fullscreen,
 #videoCard:-webkit-full-screen {
-  background: #0b0c12;
+  background: #000;
   border: none;
   border-radius: 0;
   display: flex;
   flex-direction: column;
-  padding: 14px 18px;
+  padding: 0;
 }
 #videoCard:fullscreen h2,
-#videoCard:-webkit-full-screen h2 { color: #fff; }
+#videoCard:-webkit-full-screen h2 { display: none; }
 #videoCard:fullscreen .video-shell,
 #videoCard:-webkit-full-screen .video-shell {
   flex: 1;
   min-height: 0;
+  border-radius: 0;
   aspect-ratio: auto;
 }
 #videoCard:fullscreen #videoNote,
-#videoCard:-webkit-full-screen #videoNote { color: #a5aabc; }
-.progress-track {
-  flex: 1; height: 8px; border-radius: 999px; background: #e3e5ef;
-  overflow: hidden; position: relative;
+#videoCard:-webkit-full-screen #videoNote { display: none; }
+
+/* Scrubber: thin red YouTube-style bar that thickens on hover. */
+.yt-controls .progress-track {
+  width: 100%; height: 4px; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.32);
+  margin-bottom: 4px; overflow: visible; position: relative;
+  transition: height 0.1s ease;
 }
-.progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 999px; transition: width 0.3s linear; }
-.time-label { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.yt-controls .progress-track.seekable { cursor: pointer; }
+.yt-controls .progress-track:hover { height: 6px; }
+.yt-controls .progress-fill {
+  height: 100%; width: 0%; background: #ff0000; border-radius: 2px;
+  position: relative; transition: width 0.2s linear;
+}
+.progress-thumb {
+  position: absolute; right: -6px; top: 50%;
+  width: 13px; height: 13px; border-radius: 50%; background: #ff0000;
+  transform: translateY(-50%) scale(0);
+  transition: transform 0.1s ease;
+}
+.yt-controls .progress-track:hover .progress-thumb { transform: translateY(-50%) scale(1); }
+.yt-controls .time-label {
+  color: #fff; font-size: 13px; margin-left: 8px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 
 .notice {
   background: #fffaeb; border: 1px solid #fbe6a2; color: #92600a;
@@ -365,6 +408,11 @@ body.video-mode .center-wrap {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
   margin: 18px 0;
+}
+.thumb-rating-block {
+  margin: 8px 0 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #e6e8f0);
 }
 .thumb-option {
   border: 2px solid var(--border);
@@ -449,6 +497,48 @@ body.video-mode .center-wrap {
 }
 
 /* admin: question & answer view inside the submission modal */
+/* Grouped answer sections in the submission detail modal */
+.qa-section {
+  margin: 18px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.qa-section:first-child { border-top: none; padding-top: 0; }
+.qa-section-title {
+  font-size: 14px; font-weight: 700; color: var(--accent);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.02em;
+}
+.qa-thumb-wrap {
+  position: relative; display: inline-block; max-width: 260px; width: 100%;
+  cursor: zoom-in; border-radius: 8px; overflow: hidden;
+}
+.qa-thumb {
+  width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block;
+}
+/* Hover hint: lighten the thumbnail and show a fullscreen icon in the middle. */
+.qa-thumb-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.qa-thumb-wrap:hover .qa-thumb-overlay { opacity: 1; }
+.qa-thumb-overlay span {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 25px;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Full-screen image viewer for the selected thumbnail */
+.img-lightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; cursor: zoom-out;
+}
+.img-lightbox img {
+  max-width: 100%; max-height: 100%;
+  border-radius: 8px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
 .qa { margin: 14px 0; }
 .qa-q { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
 .qa-a {
