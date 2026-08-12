@@ -231,13 +231,13 @@ app.get('/api/admin/tasks/:id/export.csv', requireAdmin, ah(async (req, res) => 
   if (!task) return res.status(404).send('Task not found');
   const subs = await store.listSubmissions(req.params.id);
   const header = [
-    'Name', 'Email', 'County', 'Country', 'Status',
+    'Name', 'Email', 'Contact (WhatsApp)', 'County', 'Country', 'Status',
     'Started At (UTC)', 'Completed At (UTC)', 'Watch Seconds',
     ...(task.thumbnails.length ? ['Thumbnail Chosen', 'Thumbnail Rating'] : []),
     ...task.questions.map((q) => q.label),
   ];
   const rows = subs.map((s) => [
-    s.name, s.email, s.county, s.country, s.status,
+    s.name, s.email, s.phone || '', s.county, s.country, s.status,
     s.started_at, s.completed_at || '', Math.round(s.watch_seconds),
     ...(task.thumbnails.length
       ? [s.thumbnail_title || '', s.thumbnail_rating != null ? `${s.thumbnail_rating} / 5` : '']
@@ -271,6 +271,7 @@ app.get('/api/admin/tasks/:id/export.xlsx', requireAdmin, ah(async (req, res) =>
     cols: [
       { label: 'Name', get: (s) => s.name },
       { label: 'Email', get: (s) => s.email },
+      { label: 'Contact (WhatsApp)', get: (s) => s.phone || '' },
       { label: 'County', get: (s) => s.county },
       { label: 'Country', get: (s) => s.country },
       { label: 'Status', get: (s) => s.status },
@@ -436,16 +437,20 @@ app.get('/api/tasks/:id', ah(async (req, res) => {
 app.post('/api/tasks/:id/start', ah(async (req, res) => {
   const task = await store.getTask(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  const { name, email, county, country } = req.body || {};
-  for (const [field, value] of Object.entries({ name, email, county, country })) {
+  const { name, email, phone, county, country } = req.body || {};
+  for (const [field, value] of Object.entries({ name, email, phone, county, country })) {
     if (!value || !String(value).trim())
       return res.status(400).json({ error: `${field} is required.` });
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
     return res.status(400).json({ error: 'Please enter a valid email address.' });
+  const phoneDigits = String(phone).replace(/\D/g, '');
+  if (phoneDigits.length < 7 || phoneDigits.length > 15)
+    return res.status(400).json({ error: 'Please enter a valid WhatsApp contact number.' });
   const sub = await store.createSubmission(req.params.id, {
     name: String(name).trim(),
     email: String(email).trim(),
+    phone: String(phone).trim(),
     county: String(county).trim(),
     country: String(country).trim(),
   });

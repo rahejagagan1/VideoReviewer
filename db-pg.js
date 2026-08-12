@@ -119,6 +119,7 @@ const ready = (async () => {
   await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_id INTEGER');
   await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_title TEXT');
   await pool.query('ALTER TABLE submissions ADD COLUMN IF NOT EXISTS thumbnail_rating DOUBLE PRECISION');
+  await pool.query("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT ''");
   // Databases created before the 'rating' question type get their CHECK widened.
   for (const t of ['questions', 'default_questions']) {
     await pool.query(`ALTER TABLE ${t} DROP CONSTRAINT IF EXISTS ${t}_type_check`);
@@ -329,11 +330,11 @@ async function deleteDefaultQuestion(id) {
 
 // ---------- submissions ----------
 
-async function createSubmission(taskId, { name, email, county, country }) {
+async function createSubmission(taskId, { name, email, phone, county, country }) {
   const id = newId(9);
   const { rows } = await pool.query(
-    'INSERT INTO submissions (id, task_id, name, email, county, country) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-    [id, taskId, name, email, county, country]
+    'INSERT INTO submissions (id, task_id, name, email, phone, county, country) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+    [id, taskId, name, email, phone || '', county, country]
   );
   return rows[0];
 }

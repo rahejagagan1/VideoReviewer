@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --env-file-if-exists=.env -e \"const {Pool}=require\\('pg'\\);const p=new Pool\\({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}}\\);p.query\\(\\\\\"SELECT id,title FROM tasks WHERE id='994Sa0Aq'\\\\\"\\).then\\(r=>{console.log\\('PG:',JSON.stringify\\(r.rows\\)\\);return p.end\\(\\)}\\).catch\\(e=>console.log\\('PG err:',e.message\\)\\)\")",
+      "Bash(node -e \"const {DatabaseSync}=require\\('node:sqlite'\\);const db=new DatabaseSync\\('data.sqlite'\\);console.log\\('SQLite:',JSON.stringify\\(db.prepare\\(\\\\\"SELECT id,title FROM tasks WHERE id='994Sa0Aq'\\\\\"\\).all\\(\\)\\)\\)\")",
+      "Bash(node --env-file-if-exists=.env -e ' *)",
+      "PowerShell($pid4400 = \\(Get-NetTCPConnection -LocalPort 4400 -State Listen -ErrorAction SilentlyContinue\\).OwningProcess | Select-Object -First 1; if \\($pid4400\\) { Stop-Process -Id $pid4400 -Force; \"Stopped old server \\(PID $pid4400\\)\" }; npm start)",
+      "PowerShell(git push)"
+    ]
+  }
+}
