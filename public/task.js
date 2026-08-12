@@ -149,6 +149,7 @@ When you're ready, tick the box below and press "Play Video".`;
       const { submissionId } = await api(`/api/tasks/${taskId}/start`, {
         name: $('fName').value,
         email: $('fEmail').value,
+        phone: $('fPhone').value,
         county: $('fCounty').value,
         country: $('fCountry').value,
       });

@@ -57,7 +57,7 @@ p.muted, .muted { color: var(--muted); }
 label.field-label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 5px; }
 label.field-label .req { color: var(--danger); }
 
-input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], select, textarea {
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="url"], input[type="tel"], select, textarea {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);

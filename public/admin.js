@@ -767,7 +767,7 @@ When you're ready, tick the box below and press "Play Video".`;
       table.innerHTML =
         `<thead><tr>
           <th></th>
-          <th>Name</th><th>Email</th><th>County</th><th>Country</th><th>Status</th>
+          <th>Name</th><th>Email</th><th>Contact (WhatsApp)</th><th>County</th><th>Country</th><th>Status</th>
           <th>Started (UTC)</th><th>Completed (UTC)</th>
           ${task.thumbnails.length ? '<th>Thumbnail</th><th>Thumb Rating</th>' : ''}
         </tr></thead><tbody>` +
@@ -777,6 +777,7 @@ When you're ready, tick the box below and press "Play Video".`;
           <td><button class="btn secondary small" data-view="${esc(s.id)}">👁 View</button></td>
           <td>${esc(s.name)}</td>
           <td>${esc(s.email)}</td>
+          <td>${esc(s.phone || '—')}</td>
           <td>${esc(s.county)}</td>
           <td>${esc(s.country)}</td>
           <td>${badge(s.status)}</td>
@@ -802,7 +803,7 @@ When you're ready, tick the box below and press "Play Video".`;
     const statusText = { started: 'Started (did not finish video)', video_watched: 'Watched video (no answers yet)', completed: 'Completed' };
     $('subModalTitle').textContent = sub.name;
     $('subModalMeta').innerHTML =
-      `${esc(sub.email)} · ${esc(sub.county)}, ${esc(sub.country)}<br>` +
+      `${esc(sub.email)}${sub.phone ? ` · 📱 ${esc(sub.phone)}` : ''} · ${esc(sub.county)}, ${esc(sub.country)}<br>` +
       `${esc(statusText[sub.status] || sub.status)} · Started ${esc(sub.started_at)} UTC` +
       (sub.completed_at ? ` · Completed ${esc(sub.completed_at)} UTC` : '');
 

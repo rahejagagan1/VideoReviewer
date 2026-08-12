@@ -95,6 +95,8 @@ db.exec(`
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_title TEXT');
   if (!subCols.includes('thumbnail_rating'))
     db.exec('ALTER TABLE submissions ADD COLUMN thumbnail_rating REAL');
+  if (!subCols.includes('phone'))
+    db.exec("ALTER TABLE submissions ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   const secCols = db.prepare('PRAGMA table_info(sections)').all().map((c) => c.name);
   if (!secCols.includes('allow_back'))
     db.exec('ALTER TABLE sections ADD COLUMN allow_back INTEGER NOT NULL DEFAULT 0');
@@ -313,11 +315,11 @@ function deleteDefaultQuestion(id) {
 
 // ---------- submissions ----------
 
-function createSubmission(taskId, { name, email, county, country }) {
+function createSubmission(taskId, { name, email, phone, county, country }) {
   const id = newId(9);
   db.prepare(
-    'INSERT INTO submissions (id, task_id, name, email, county, country) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(id, taskId, name, email, county, country);
+    'INSERT INTO submissions (id, task_id, name, email, phone, county, country) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, taskId, name, email, phone || '', county, country);
   return db.prepare('SELECT * FROM submissions WHERE id = ?').get(id);
 }
 
